@@ -1,14 +1,17 @@
 import { Status } from "models/model";
-import LatexOCR from "main";
+import LatexOCR, { ApiProvider, LatexOCRSettings } from "main";
 import { LocalModel } from "models/local_model";
 import ApiModel from "models/online_model";
-import { PluginSettingTab, App, Setting, Notice, TextComponent } from "obsidian";
+import { PluginSettingTab, App, Setting, Notice, TextComponent, TextAreaComponent } from "obsidian";
 import safeStorage from "safeStorage";
 import { picker } from "utils";
 import { normalize } from "path";
 
-const obfuscateApiKey = (apiKey = ''): string =>
-    apiKey.length > 0 ? apiKey.replace(/^(.{3})(.*)(.{4})$/, '$1****$3') : ''
+const obfuscateApiKey = (apiKey = ''): string => {
+    if (!apiKey) return '';
+    if (apiKey.length <= 8) return '****';
+    return `${apiKey.slice(0, 4)}****${apiKey.slice(-4)}`;
+};
 
 export default class LatexOCRSettingsTab extends PluginSettingTab {
     plugin: LatexOCR;
@@ -34,7 +37,7 @@ export default class LatexOCRSettingsTab extends PluginSettingTab {
                 .addOption('$$', "Block")
                 .setValue(this.plugin.settings.delimiters)
                 .onChange(async (value) => {
-                    this.plugin.settings.delimiters = value
+                    this.plugin.settings.delimiters = value;
                     await this.plugin.saveSettings();
                 })
             );
@@ -46,231 +49,460 @@ export default class LatexOCRSettingsTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.showStatusBar)
                 .onChange(async (value) => {
                     if (value) {
-                        this.plugin.statusBar.show()
+                        this.plugin.statusBar.show();
                     } else {
-                        this.plugin.statusBar.hide()
+                        this.plugin.statusBar.hide();
                     }
-                    this.plugin.settings.showStatusBar = value
-                    await this.plugin.saveSettings()
+                    this.plugin.settings.showStatusBar = value;
+                    await this.plugin.saveSettings();
                 }));
 
         new Setting(containerEl)
             .setName("Use local model")
-            .setDesc("Use local model with python. \
-			See the project's README for installation instructions.")
+            .setDesc("Run local Python server instead of cloud vision APIs (OpenRouter, Anthropic, OpenAI).")
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.useLocalModel)
-                .onChange(async value => {
+                .onChange(async (value) => {
                     if (this.plugin.model) {
-                        this.plugin.model.unload()
+                        this.plugin.model.unload();
                     }
 
                     if (value) {
-                        this.plugin.model = new LocalModel(this.plugin.settings)
-                        configuration_text.setText(LOCAL_CONF_TEXT)
-
-                        ApiSettings.forEach(e => e.hide())
-                        LocalSettings.forEach(e => e.show())
+                        this.plugin.model = new LocalModel(this.plugin.settings);
                     } else {
-                        this.plugin.model = new ApiModel(this.plugin.settings)
-                        configuration_text.setText(API_CONF_TEXT)
-
-                        ApiSettings.forEach(e => e.show())
-                        LocalSettings.forEach(e => e.hide())
+                        this.plugin.model = new ApiModel(this.plugin.settings);
                     }
-                    this.plugin.model.load()
+                    this.plugin.model.load();
 
-                    this.plugin.settings.useLocalModel = value
-                    await this.plugin.saveSettings()
-                }))
-
+                    this.plugin.settings.useLocalModel = value;
+                    await this.plugin.saveSettings();
+                    this.display();
+                }));
 
         const checkStatus = () => {
+            new Notice("⏳ Checking status...");
             this.plugin.model.status().then((status) => {
                 switch (status.status) {
                     case Status.Ready:
-                        new Notice("✅ The server is reachable!")
+                        new Notice(`✅ ${status.msg || "Connected and ready!"}`);
                         break;
-
                     case Status.Downloading:
-                        new Notice(`🌐 ${status.msg}`)
+                        new Notice(`🌐 ${status.msg}`);
                         break;
-
                     case Status.Loading:
-                        new Notice(`⚙️ ${status.msg}`)
+                        new Notice(`⚙️ ${status.msg}`);
                         break;
-
                     case Status.Misconfigured:
-                        new Notice(`🔧 ${status.msg}`)
+                        new Notice(`🔧 ${status.msg}`);
                         break;
-
                     case Status.Unreachable:
                     default:
-                        new Notice(`❌ ${status.msg}`)
+                        new Notice(`❌ ${status.msg}`);
                         break;
                 }
-            })
-        }
+            }).catch(err => {
+                new Notice(`❌ Error: ${err?.message || err}`);
+            });
+        };
 
         new Setting(containerEl)
             .setName("Debug logging")
-            .setDesc("To enable verbose logging, open the developer console (Ctrl+Shift+I) and set the log level to include 'Verbose' messages.");
+            .setDesc("To enable verbose logging, open the developer console (Ctrl+Shift+I / Cmd+Option+I) and set the log level to include 'Verbose' messages.");
 
-
-        const API_CONF_TEXT = "HuggingFace API Configuration"
-        const LOCAL_CONF_TEXT = "Local Python Model Configuration"
-        const configuration_text = containerEl.createEl("h5", { text: API_CONF_TEXT })
         if (this.plugin.settings.useLocalModel) {
-            configuration_text.setText(LOCAL_CONF_TEXT)
-        }
+            ///// LOCAL MODEL SETTINGS /////
+            containerEl.createEl("h5", { text: "Local Python Model Configuration" });
 
-        ///// API MODEL SETTINGS /////
-
-        const KeyDisplay = new Setting(containerEl)
-            .setName('Current API Key')
-            .addText(text => text
-                .setPlaceholder(this.plugin.settings.obfuscatedKey).setDisabled(true))
-
-        const apiKeyDesc = new DocumentFragment()
-        apiKeyDesc.textContent = "Hugging face API key. See the "
-        apiKeyDesc.createEl("a", { text: "hugging face docs", href: "https://huggingface.co/docs/api-inference/quicktour#get-your-api-token" })
-        apiKeyDesc.createSpan({ text: " on how to generate it." })
-        const apiKeyInput = new Setting(containerEl)
-            .setName('Set API Key')
-            .setDesc(apiKeyDesc)
-            .addText(text => text.inputEl.setAttr("type", "password"))
-        apiKeyInput.addButton(btn =>
-            btn.setButtonText("Submit")
-                .setCta()
-                .onClick(async evt => {
-                    const value = (apiKeyInput.components[0] as TextComponent).getValue()
-                    let key
-                    if (safeStorage.isEncryptionAvailable()) {
-                        key = safeStorage.encryptString(value)
-                    } else {
-                        key = value
-                    }
-
-                    new Notice("🔧 Api key saved")
-                    this.plugin.settings.obfuscatedKey = obfuscateApiKey(value)
-                    this.plugin.settings.hfApiKey = key;
-                    (KeyDisplay.components[0] as TextComponent).setPlaceholder(this.plugin.settings.obfuscatedKey)
-                    await this.plugin.saveSettings()
-                }))
-
-
-        const ApiSettings = [apiKeyInput.settingEl, KeyDisplay.settingEl]
-
-
-        ///// LOCAL MODEL SETTINGS /////
-
-        const pythonPath = new Setting(containerEl)
-            .setName('Python path')
-            .setDesc("Path to Python installation. You need to have the `latex_ocr_server` package installed, see the project's README for more information.\
-			Note that changing the path requires a server restart in order to take effect.")
-            .addExtraButton(cb => cb
-                .setIcon("folder")
-                .setTooltip("Browse")
-                .onClick(async () => {
-                    const file = await picker("Open Python path", ["openFile"]) as string;
-                    (pythonPath.components[1] as TextComponent).setValue(file)
-                    this.plugin.settings.pythonPath = normalize(file);
-                    await this.plugin.saveSettings();
-                }))
-            .addText(text => text
-                .setPlaceholder('path/to/python.exe')
-                .setValue(this.plugin.settings.pythonPath)
-                .onChange(async (value) => {
-                    this.plugin.settings.pythonPath = normalize(value);
-                    await this.plugin.saveSettings();
-                }))
-
-        const serverStatus = new Setting(containerEl)
-            .setName('Server control')
-            .setDesc("LatexOCR runs a python script in the background that can process OCR requests. \
-				Use these settings to check it's status, start, or stop it. \
-				Note that starting can take a few seconds. If the model isn't cached, it needs to be downloaded first (~1.4 GB).")
-            .addButton(button => button
-                .setButtonText("Check status")
-                .setCta()
-                .onClick(evt => {
-                    checkStatus()
-                })
-            )
-            .addButton(button => button
-                .setButtonText("(Re)start server")
-                .onClick(async (evt) => {
-                    new Notice("⚙️ Starting server...", 5000)
-                    if (this.plugin.model) {
-                        this.plugin.model.unload()
-                        this.plugin.model.load()
-                        this.plugin.model.start()
-                    }
-                }))
-            .addButton(button => button
-                .setButtonText("Stop server")
-                .onClick(async (evt) => {
-                    if (this.plugin.model) {
-                        this.plugin.model.unload()
-                        new Notice("⚙️ Server stopped", 2000);
-                    } else {
-                        new Notice("❌ No server found to stop", 5000);
-                    }
-                }))
-
-
-        const port = new Setting(containerEl)
-            .setName('Port')
-            .setDesc('Port to run the LatexOCR server on. Note that a server restart is required in order for this to take effect.')
-            .addText(text => text
-                .setValue(this.plugin.settings.port)
-                .onChange(async (value) => {
-                    this.plugin.settings.port = value;
-                    await this.plugin.saveSettings();
-                }))
-
-        const startOnLaunch = new Setting(containerEl)
-            .setName("Start server on launch")
-            .setDesc("The LatexOCR server consumes quite a lot of memory. If you don't use it often, feel free to disable this.\
-				You will need to (re)start the server manually if you wish to use the plugin.")
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.startServerOnLoad)
-                .onChange(async (value) => {
-                    this.plugin.settings.startServerOnLoad = value;
-                    await this.plugin.saveSettings();
-                }))
-
-        const cacheDir = new Setting(containerEl)
-            .setName("Cache dir")
-            .setDesc("The directory where the model is saved. By default this is in `Vault/.obsidian/plugins/obsidian-latex-ocr/model_cache`. \
-					Note that changing this will not delete the old cache, and require the model to be redownloaded. \
-					The server must be restarted for this to take effect.")
-            .addExtraButton(cb => cb
-                .setIcon("folder")
-                .setTooltip("Browse")
-                .onClick(async () => {
-                    const folder = await picker("Open cache directory", ["openDirectory"]) as string;
-                    (cacheDir.components[1] as TextComponent).setValue(folder)
-                    this.plugin.settings.cacheDirPath = normalize(folder)
-                    await this.plugin.saveSettings();
-                }))
-            .addText(text => text
-                .setValue(this.plugin.settings.cacheDirPath)
-                .onChange(async (value) => {
-                    const path = normalize(value)
-                    if (path !== "") {
-                        this.plugin.settings.cacheDirPath = path
+            const pythonPath = new Setting(containerEl)
+                .setName('Python path')
+                .setDesc("Path to Python installation. You need to have the `latex_ocr_server` package installed.")
+                .addExtraButton(cb => cb
+                    .setIcon("folder")
+                    .setTooltip("Browse")
+                    .onClick(async () => {
+                        const file = await picker("Open Python path", ["openFile"]) as string;
+                        (pythonPath.components[1] as TextComponent).setValue(file);
+                        this.plugin.settings.pythonPath = normalize(file);
                         await this.plugin.saveSettings();
-                    }
-                }))
+                    }))
+                .addText(text => text
+                    .setPlaceholder('path/to/python.exe')
+                    .setValue(this.plugin.settings.pythonPath)
+                    .onChange(async (value) => {
+                        this.plugin.settings.pythonPath = normalize(value);
+                        await this.plugin.saveSettings();
+                    }));
 
-        const LocalSettings: HTMLElement[] = [pythonPath.settingEl, serverStatus.settingEl, port.settingEl, startOnLaunch.settingEl, cacheDir.settingEl]
+            new Setting(containerEl)
+                .setName('Server control')
+                .setDesc("LatexOCR runs a python script in the background that can process OCR requests.")
+                .addButton(button => button
+                    .setButtonText("Check status")
+                    .setCta()
+                    .onClick(() => checkStatus())
+                )
+                .addButton(button => button
+                    .setButtonText("(Re)start server")
+                    .onClick(async () => {
+                        new Notice("⚙️ Starting server...", 5000);
+                        if (this.plugin.model) {
+                            this.plugin.model.unload();
+                            this.plugin.model.load();
+                            this.plugin.model.start();
+                        }
+                    }))
+                .addButton(button => button
+                    .setButtonText("Stop server")
+                    .onClick(async () => {
+                        if (this.plugin.model) {
+                            this.plugin.model.unload();
+                            new Notice("⚙️ Server stopped", 2000);
+                        } else {
+                            new Notice("❌ No server found to stop", 5000);
+                        }
+                    }));
 
-        if (this.plugin.settings.useLocalModel) {
-            ApiSettings.forEach(e => e.hide())
+            new Setting(containerEl)
+                .setName('Port')
+                .setDesc('Port to run the LatexOCR server on.')
+                .addText(text => text
+                    .setValue(this.plugin.settings.port)
+                    .onChange(async (value) => {
+                        this.plugin.settings.port = value;
+                        await this.plugin.saveSettings();
+                    }));
+
+            new Setting(containerEl)
+                .setName("Start server on launch")
+                .setDesc("Start the background server automatically when Obsidian starts.")
+                .addToggle(toggle => toggle
+                    .setValue(this.plugin.settings.startServerOnLoad)
+                    .onChange(async (value) => {
+                        this.plugin.settings.startServerOnLoad = value;
+                        await this.plugin.saveSettings();
+                    }));
+
+            const cacheDir = new Setting(containerEl)
+                .setName("Cache dir")
+                .setDesc("Directory where the local model weights are cached.")
+                .addExtraButton(cb => cb
+                    .setIcon("folder")
+                    .setTooltip("Browse")
+                    .onClick(async () => {
+                        const folder = await picker("Open cache directory", ["openDirectory"]) as string;
+                        (cacheDir.components[1] as TextComponent).setValue(folder);
+                        this.plugin.settings.cacheDirPath = normalize(folder);
+                        await this.plugin.saveSettings();
+                    }))
+                .addText(text => text
+                    .setValue(this.plugin.settings.cacheDirPath)
+                    .onChange(async (value) => {
+                        const path = normalize(value);
+                        if (path !== "") {
+                            this.plugin.settings.cacheDirPath = path;
+                            await this.plugin.saveSettings();
+                        }
+                    }));
         } else {
-            LocalSettings.forEach(e => e.hide())
-        }
+            ///// ONLINE API MODEL SETTINGS /////
+            containerEl.createEl("h5", { text: "Online Vision API Configuration" });
 
+            const providerSetting = new Setting(containerEl)
+                .setName("API Provider")
+                .setDesc("Choose your vision LLM / OCR provider (OpenRouter, Anthropic, OpenAI, or Custom).")
+                .addDropdown(dd => dd
+                    .addOption("openrouter", "OpenRouter (Recommended)")
+                    .addOption("anthropic", "Anthropic (Claude)")
+                    .addOption("openai", "OpenAI")
+                    .addOption("custom", "Custom (OpenAI-compatible)")
+                    .addOption("huggingface", "Hugging Face (Legacy)")
+                    .setValue(this.plugin.settings.apiProvider || "openrouter")
+                    .onChange(async (value) => {
+                        this.plugin.settings.apiProvider = value as ApiProvider;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+                );
+
+            const activeProvider = this.plugin.settings.apiProvider || "openrouter";
+
+            const saveApiKey = async (rawVal: string, keyProp: keyof LatexOCRSettings, obfProp: keyof LatexOCRSettings) => {
+                let storedKey: string | ArrayBuffer = rawVal;
+                if (safeStorage.isEncryptionAvailable()) {
+                    storedKey = safeStorage.encryptString(rawVal);
+                }
+                (this.plugin.settings as any)[keyProp] = storedKey;
+                (this.plugin.settings as any)[obfProp] = obfuscateApiKey(rawVal);
+                await this.plugin.saveSettings();
+                new Notice("🔧 API key saved successfully");
+                this.display();
+            };
+
+            if (activeProvider === "openrouter") {
+                new Setting(containerEl)
+                    .setName("Current API Key")
+                    .setDesc("Currently configured OpenRouter API key.")
+                    .addText(text => text
+                        .setPlaceholder(this.plugin.settings.openrouterObfuscatedKey || "No key set")
+                        .setDisabled(true));
+
+                const desc = new DocumentFragment();
+                desc.textContent = "OpenRouter API key. Get one from the ";
+                desc.createEl("a", { text: "OpenRouter Keys Dashboard", href: "https://openrouter.ai/keys" });
+                desc.createSpan({ text: "." });
+
+                let inputVal = "";
+                new Setting(containerEl)
+                    .setName("Set OpenRouter API Key")
+                    .setDesc(desc)
+                    .addText(text => {
+                        text.inputEl.setAttr("type", "password");
+                        text.setPlaceholder("sk-or-v1-...");
+                        text.onChange(v => { inputVal = v; });
+                    })
+                    .addButton(btn => btn
+                        .setButtonText("Save Key")
+                        .setCta()
+                        .onClick(async () => {
+                            if (inputVal.trim()) {
+                                await saveApiKey(inputVal.trim(), "openrouterApiKey", "openrouterObfuscatedKey");
+                            }
+                        }));
+
+                const modelSetting = new Setting(containerEl)
+                    .setName("Model ID")
+                    .setDesc("Type any OpenRouter model ID or choose from presets.")
+                    .addText(text => {
+                        text.setValue(this.plugin.settings.openrouterModel || "google/gemini-2.5-flash");
+                        text.onChange(async val => {
+                            this.plugin.settings.openrouterModel = val.trim();
+                            await this.plugin.saveSettings();
+                        });
+                    })
+                    .addDropdown(dd => dd
+                        .addOption("", "Choose preset...")
+                        .addOption("google/gemini-2.5-flash", "google/gemini-2.5-flash (Fast & Affordable)")
+                        .addOption("openai/gpt-5.4-mini", "openai/gpt-5.4-mini (Efficient)")
+                        .addOption("anthropic/claude-sonnet-5", "anthropic/claude-sonnet-5 (Frontier)")
+                        .addOption("openrouter/auto", "openrouter/auto (Automatic Routing)")
+                        .onChange(async val => {
+                            if (val) {
+                                this.plugin.settings.openrouterModel = val;
+                                (modelSetting.components[0] as TextComponent).setValue(val);
+                                await this.plugin.saveSettings();
+                            }
+                        })
+                    );
+
+            } else if (activeProvider === "anthropic") {
+                new Setting(containerEl)
+                    .setName("Current API Key")
+                    .setDesc("Currently configured Anthropic API key.")
+                    .addText(text => text
+                        .setPlaceholder(this.plugin.settings.anthropicObfuscatedKey || "No key set")
+                        .setDisabled(true));
+
+                const desc = new DocumentFragment();
+                desc.textContent = "Anthropic API key. Get one from the ";
+                desc.createEl("a", { text: "Anthropic Console", href: "https://console.anthropic.com/settings/keys" });
+                desc.createSpan({ text: "." });
+
+                let inputVal = "";
+                new Setting(containerEl)
+                    .setName("Set Anthropic API Key")
+                    .setDesc(desc)
+                    .addText(text => {
+                        text.inputEl.setAttr("type", "password");
+                        text.setPlaceholder("sk-ant-...");
+                        text.onChange(v => { inputVal = v; });
+                    })
+                    .addButton(btn => btn
+                        .setButtonText("Save Key")
+                        .setCta()
+                        .onClick(async () => {
+                            if (inputVal.trim()) {
+                                await saveApiKey(inputVal.trim(), "anthropicApiKey", "anthropicObfuscatedKey");
+                            }
+                        }));
+
+                const modelSetting = new Setting(containerEl)
+                    .setName("Model ID")
+                    .setDesc("Type any Anthropic Claude model ID or choose from presets.")
+                    .addText(text => {
+                        text.setValue(this.plugin.settings.anthropicModel || "claude-sonnet-5");
+                        text.onChange(async val => {
+                            this.plugin.settings.anthropicModel = val.trim();
+                            await this.plugin.saveSettings();
+                        });
+                    })
+                    .addDropdown(dd => dd
+                        .addOption("", "Choose preset...")
+                        .addOption("claude-sonnet-5", "claude-sonnet-5 (Latest Frontier)")
+                        .addOption("claude-haiku-4-5", "claude-haiku-4-5 (Fast & Lightweight)")
+                        .addOption("claude-opus-5", "claude-opus-5 (Maximum Reasoning)")
+                        .onChange(async val => {
+                            if (val) {
+                                this.plugin.settings.anthropicModel = val;
+                                (modelSetting.components[0] as TextComponent).setValue(val);
+                                await this.plugin.saveSettings();
+                            }
+                        })
+                    );
+
+            } else if (activeProvider === "openai") {
+                new Setting(containerEl)
+                    .setName("Current API Key")
+                    .setDesc("Currently configured OpenAI API key.")
+                    .addText(text => text
+                        .setPlaceholder(this.plugin.settings.openaiObfuscatedKey || "No key set")
+                        .setDisabled(true));
+
+                const desc = new DocumentFragment();
+                desc.textContent = "OpenAI API key. Get one from the ";
+                desc.createEl("a", { text: "OpenAI API Keys Dashboard", href: "https://platform.openai.com/api-keys" });
+                desc.createSpan({ text: "." });
+
+                let inputVal = "";
+                new Setting(containerEl)
+                    .setName("Set OpenAI API Key")
+                    .setDesc(desc)
+                    .addText(text => {
+                        text.inputEl.setAttr("type", "password");
+                        text.setPlaceholder("sk-...");
+                        text.onChange(v => { inputVal = v; });
+                    })
+                    .addButton(btn => btn
+                        .setButtonText("Save Key")
+                        .setCta()
+                        .onClick(async () => {
+                            if (inputVal.trim()) {
+                                await saveApiKey(inputVal.trim(), "openaiApiKey", "openaiObfuscatedKey");
+                            }
+                        }));
+
+                const modelSetting = new Setting(containerEl)
+                    .setName("Model ID")
+                    .setDesc("Type any OpenAI model ID or choose from presets.")
+                    .addText(text => {
+                        text.setValue(this.plugin.settings.openaiModel || "gpt-5.4-mini");
+                        text.onChange(async val => {
+                            this.plugin.settings.openaiModel = val.trim();
+                            await this.plugin.saveSettings();
+                        });
+                    })
+                    .addDropdown(dd => dd
+                        .addOption("", "Choose preset...")
+                        .addOption("gpt-5.4-mini", "gpt-5.4-mini (Latest Fast & Economical)")
+                        .addOption("gpt-5.4", "gpt-5.4 (Latest General Workhorse)")
+                        .addOption("gpt-4o", "gpt-4o (Vision Multimodal)")
+                        .addOption("gpt-4o-mini", "gpt-4o-mini (Lightweight)")
+                        .onChange(async val => {
+                            if (val) {
+                                this.plugin.settings.openaiModel = val;
+                                (modelSetting.components[0] as TextComponent).setValue(val);
+                                await this.plugin.saveSettings();
+                            }
+                        })
+                    );
+
+            } else if (activeProvider === "custom") {
+                new Setting(containerEl)
+                    .setName("Base URL")
+                    .setDesc("Base endpoint URL for any OpenAI-compatible server (e.g. http://localhost:11434/v1 or https://api.together.xyz/v1).")
+                    .addText(text => text
+                        .setPlaceholder("https://api.openai.com/v1")
+                        .setValue(this.plugin.settings.customEndpoint || "https://api.openai.com/v1")
+                        .onChange(async val => {
+                            this.plugin.settings.customEndpoint = val.trim();
+                            await this.plugin.saveSettings();
+                        }));
+
+                new Setting(containerEl)
+                    .setName("Current API Key")
+                    .setDesc("Currently configured custom API key (optional for local servers).")
+                    .addText(text => text
+                        .setPlaceholder(this.plugin.settings.customObfuscatedKey || "No key set")
+                        .setDisabled(true));
+
+                let inputVal = "";
+                new Setting(containerEl)
+                    .setName("Set Custom API Key")
+                    .setDesc("API key for your custom endpoint (leave empty if not required).")
+                    .addText(text => {
+                        text.inputEl.setAttr("type", "password");
+                        text.setPlaceholder("API key (optional)...");
+                        text.onChange(v => { inputVal = v; });
+                    })
+                    .addButton(btn => btn
+                        .setButtonText("Save Key")
+                        .setCta()
+                        .onClick(async () => {
+                            await saveApiKey(inputVal.trim(), "customApiKey", "customObfuscatedKey");
+                        }));
+
+                new Setting(containerEl)
+                    .setName("Model ID")
+                    .setDesc("Model name configured on your OpenAI-compatible endpoint.")
+                    .addText(text => text
+                        .setPlaceholder("e.g. gpt-5.4-mini or llama3.2-vision")
+                        .setValue(this.plugin.settings.customModel || "")
+                        .onChange(async val => {
+                            this.plugin.settings.customModel = val.trim();
+                            await this.plugin.saveSettings();
+                        }));
+
+            } else if (activeProvider === "huggingface") {
+                new Setting(containerEl)
+                    .setName("Current API Key")
+                    .setDesc("Currently configured Hugging Face API key.")
+                    .addText(text => text
+                        .setPlaceholder(this.plugin.settings.obfuscatedKey || "No key set")
+                        .setDisabled(true));
+
+                const apiKeyDesc = new DocumentFragment();
+                apiKeyDesc.textContent = "Hugging face API key. See the ";
+                apiKeyDesc.createEl("a", { text: "Hugging Face tokens page", href: "https://huggingface.co/settings/tokens" });
+                apiKeyDesc.createSpan({ text: " to generate it." });
+
+                let inputVal = "";
+                new Setting(containerEl)
+                    .setName("Set Hugging Face API Key")
+                    .setDesc(apiKeyDesc)
+                    .addText(text => {
+                        text.inputEl.setAttr("type", "password");
+                        text.setPlaceholder("hf_...");
+                        text.onChange(v => { inputVal = v; });
+                    })
+                    .addButton(btn => btn
+                        .setButtonText("Save Key")
+                        .setCta()
+                        .onClick(async () => {
+                            if (inputVal.trim()) {
+                                await saveApiKey(inputVal.trim(), "hfApiKey", "obfuscatedKey");
+                            }
+                        }));
+            }
+
+            // Connection check button for online APIs
+            new Setting(containerEl)
+                .setName("Test API Connection")
+                .setDesc("Verify that your API key and endpoint are working properly.")
+                .addButton(btn => btn
+                    .setButtonText("Check status")
+                    .setCta()
+                    .onClick(() => checkStatus()));
+
+            // Optional OCR instruction prompt customization
+            new Setting(containerEl)
+                .setName("Custom OCR Prompt")
+                .setDesc("Customize the instructions sent to the vision model (leave empty to use default prompt).")
+                .addTextArea(area => area
+                    .setPlaceholder("Default prompt: You are an expert OCR tool specialized in mathematical and scientific formulas...")
+                    .setValue(this.plugin.settings.customPrompt || "")
+                    .onChange(async val => {
+                        this.plugin.settings.customPrompt = val;
+                        await this.plugin.saveSettings();
+                    }));
+        }
     }
 }

@@ -15,6 +15,8 @@ import { LatexOCRModal } from 'modal';
 import ApiModel from 'models/online_model';
 import LatexOCRSettingsTab from 'settings';
 
+export type ApiProvider = 'openrouter' | 'anthropic' | 'openai' | 'custom' | 'huggingface';
+
 export interface LatexOCRSettings {
 	/** Path to look for python installation */
 	pythonPath: string;
@@ -34,14 +36,49 @@ export interface LatexOCRSettings {
 	/** Toggle status bar */
 	showStatusBar: boolean;
 
-	/** Use local model or HF API */
+	/** Use local model or online API */
 	useLocalModel: boolean;
+
+	/** Selected online API provider */
+	apiProvider: ApiProvider;
+
+	/** OpenRouter API key */
+	openrouterApiKey: string | ArrayBuffer;
+	/** OpenRouter obfuscated key */
+	openrouterObfuscatedKey: string;
+	/** OpenRouter Model ID */
+	openrouterModel: string;
+
+	/** Anthropic API key */
+	anthropicApiKey: string | ArrayBuffer;
+	/** Anthropic obfuscated key */
+	anthropicObfuscatedKey: string;
+	/** Anthropic Model ID */
+	anthropicModel: string;
+
+	/** OpenAI API key */
+	openaiApiKey: string | ArrayBuffer;
+	/** OpenAI obfuscated key */
+	openaiObfuscatedKey: string;
+	/** OpenAI Model ID */
+	openaiModel: string;
+
+	/** Custom API key */
+	customApiKey: string | ArrayBuffer;
+	/** Custom obfuscated key */
+	customObfuscatedKey: string;
+	/** Custom endpoint URL */
+	customEndpoint: string;
+	/** Custom Model ID */
+	customModel: string;
 
 	/** Hugging face API key */
 	hfApiKey: string | ArrayBuffer;
-
-	/** Obfuscated key shown in settings */
+	/** Obfuscated key shown in settings (legacy Hugging Face) */
 	obfuscatedKey: string;
+
+	/** Optional custom prompt for vision OCR */
+	customPrompt: string;
 }
 
 const DEFAULT_SETTINGS: LatexOCRSettings = {
@@ -52,8 +89,23 @@ const DEFAULT_SETTINGS: LatexOCRSettings = {
 	startServerOnLoad: true,
 	showStatusBar: true,
 	useLocalModel: false,
-	hfApiKey: "",
-	obfuscatedKey: "",
+	apiProvider: 'openrouter',
+	openrouterApiKey: '',
+	openrouterObfuscatedKey: '',
+	openrouterModel: 'google/gemini-2.5-flash',
+	anthropicApiKey: '',
+	anthropicObfuscatedKey: '',
+	anthropicModel: 'claude-sonnet-5',
+	openaiApiKey: '',
+	openaiObfuscatedKey: '',
+	openaiModel: 'gpt-5.4-mini',
+	customApiKey: '',
+	customObfuscatedKey: '',
+	customEndpoint: 'https://api.openai.com/v1',
+	customModel: '',
+	hfApiKey: '',
+	obfuscatedKey: '',
+	customPrompt: '',
 }
 
 // https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html
@@ -182,7 +234,11 @@ export default class LatexOCR extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const loadedData = await this.loadData();
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData);
+		if (loadedData && !loadedData.apiProvider && loadedData.hfApiKey) {
+			this.settings.apiProvider = 'huggingface';
+		}
 	}
 
 	async saveSettings() {

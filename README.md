@@ -10,27 +10,39 @@
 
 
 
-Generate Latex equations from images and screenshots inside your vault.
+Generate LaTeX equations from images and screenshots inside your Obsidian vault using modern multimodal vision LLMs or a local Python model.
 
 <img src="/images/demo.gif" width="50%"/>
 
 ## Features
 
-- Paste LaTeX equations directly into your notes using an image from your clipboard with a custom command (bind it to a hotkey like `Ctrl+Alt+V` if you use it often!).
-- Transform images in your vault to LaTeX equations by choosing a new "Generate Latex" option in their context menu.
-- Use either the HuggingFace [inference API](#using-inference-api) or [run locally](#run-locally)
+- **Any API Key & Provider**: Use **OpenRouter**, **Anthropic (Claude)**, **OpenAI**, or any **Custom OpenAI-compatible endpoint** (local vLLM, Ollama, LM Studio, etc.).
+- **Latest Vision Models**: Choose from fast, high-accuracy presets (`google/gemini-2.5-flash`, `gpt-5.4-mini`, `claude-sonnet-5`, etc.) or input any custom model ID.
+- **Paste LaTeX Directly**: Paste LaTeX equations directly into your notes using an image from your clipboard (`Paste Latex from clipboard image`).
+- **Context Menu OCR**: Right-click on any image file in your file explorer and click "Generate Latex".
+- **Local Fallback**: Optional local Python model (`latex-ocr-server`) for completely offline usage.
 
+## Using Cloud Vision APIs (Recommended)
 
-## Using Inference API
+You can use your choice of API provider with high speed and precision:
 
-By default, this plugin uses the HuggingFace inference API. Here's how you get your API key:
-- Create an account or login at https://huggingface.co
-- Create a `read` access token in your [Hugging Face profile settings](https://huggingface.co/settings/tokens). If you already have other access tokens I recommend creating one specifically for this plugin.
-- After enabling the plugin in Obsidian, head to the Latex OCR settings tab, and input the API key you generated.
+### 1. OpenRouter (Recommended)
+1. Sign up and grab an API key from [OpenRouter Keys](https://openrouter.ai/keys).
+2. In Obsidian, go to **Settings > Latex OCR**, set Provider to **OpenRouter**, paste your key, and click **Save Key**.
+3. Choose a model like `google/gemini-2.5-flash` (fast & very low cost) or `openrouter/auto`.
 
-### Limitations
-- The inference API is a free service by huggingface, and as such it requires some time to be provisioned. Subsequent requests should be a lot faster.
-- If you would be interested in a low-cost subscription-based service that would get rid of this annoying waiting period, please react to [the related issue here](https://github.com/lucasvanmol/obsidian-latex-ocr/issues/13). I will consider building it if there is enough demand to pay for the server costs.
+### 2. Anthropic
+1. Get an API key from the [Anthropic Console](https://console.anthropic.com/settings/keys).
+2. Set Provider to **Anthropic**, paste your key, and choose a model (e.g., `claude-sonnet-5` or `claude-haiku-4-5`).
+
+### 3. OpenAI
+1. Get an API key from the [OpenAI API Keys Dashboard](https://platform.openai.com/api-keys).
+2. Set Provider to **OpenAI**, paste your key, and choose a model (e.g., `gpt-5.4-mini` or `gpt-5.4`).
+
+### 4. Custom (OpenAI-compatible)
+1. Set Provider to **Custom (OpenAI-compatible)**.
+2. Enter your Base URL (e.g. `http://localhost:11434/v1` for Ollama or a third-party gateway).
+3. Set your Model ID and optional API key.
 
 ## Run Locally
 
